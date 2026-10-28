@@ -48,7 +48,7 @@ jobs:
         run: |
           cd kernel
           curl -LSs https://raw.githubusercontent.com/MrShockWAVEog/KernelSU-Next/shockwave/kernel/setup.sh | bash -s shockwave
-          ls -d KernelSU && echo KSU_OK
+          ls -d KernelSU* && echo KSU_OK
 
       - name: Configure (base = released Shockwave config + container options)
         run: |
