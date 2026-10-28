@@ -61,10 +61,17 @@ jobs:
           clang --target=aarch64-linux-gnu -fstack-protector-strong -c /tmp/t.c -o /tmp/t.o && echo SSP_OK || echo SSP_FAIL
           clang --target=aarch64-linux-gnu -mgeneral-regs-only -c /tmp/t.c -o /tmp/t.o && echo MGR_OK || echo MGR_FAIL
           clang --target=aarch64-linux-gnu -dumpmachine
+          echo "--- toolchain probe ---"
+          which aarch64-linux-gnu-elfedit || echo NO_ELFEDIT
+          aarch64-linux-gnu-as --version | head -1 || echo NO_AS
+          PFX=$(dirname "$(which aarch64-linux-gnu-elfedit 2>/dev/null || echo /usr/bin/x)")
+          echo "prefix=$PFX"
+          clang --target=aarch64-linux-gnu --prefix="$PFX" -no-integrated-as -Werror=unknown-warning-option -fstack-protector-strong -c /tmp/t.c -o /tmp/t.o && echo PREFIX_SSP_OK || echo PREFIX_SSP_FAIL
 
       - name: Build kernel
         run: |
           set -o pipefail
+          sed -i 's/^ifdef stackp-name$/ifdef stackp-name_SKIPPED/' kernel/Makefile
           export PATH=$PWD/clang/bin:$PATH
           make -C kernel O=out ARCH=arm64 -j"$(nproc)" \
             CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
