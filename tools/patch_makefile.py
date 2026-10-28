@@ -1,30 +1,50 @@
 import pathlib
 import re
+import subprocess
 
 PATH = 'kernel/Makefile'
 
 
-def patch(path=PATH):
+def patch_makefile(path=PATH):
     p = pathlib.Path(path)
     s = p.read_text()
     before = s
-    # clang + distro binutils: --prefix 必须带 triple，否则会调用宿主 /usr/bin/as
+    # clang + distro binutils：--prefix 必须带 triple，否则会调用宿主 /usr/bin/as
     s = s.replace('CLANG_FLAGS\t+= --prefix=$(GCC_TOOLCHAIN_DIR)',
                   'CLANG_FLAGS\t+= --prefix=$(GCC_TOOLCHAIN_DIR)$(CROSS_COMPILE)')
     s = re.sub(r'^CLANG_FLAGS\t\+= --gcc-toolchain=.*\n', '', s, flags=re.M)
-    # 把 -Wno-error 直接塞进 ARCH_CFLAGS/KCFLAGS 那一行（确保在所有 -Werror 之后生效）
     line = 'KBUILD_CFLAGS   += $(ARCH_CFLAGS)   $(KCFLAGS)'
     if line in s and '$(KCFLAGS) -Wno-error' not in s:
         s = s.replace(line, line + ' -Wno-error')
     if s != before:
         p.write_text(s)
-        print('makefile patched')
-    for l in p.read_text().splitlines():
-        if 'CLANG_FLAGS' in l and ('prefix' in l or 'integrated' in l):
-            print('  ', l.strip())
-        if 'ARCH_CFLAGS' in l and 'KCFLAGS' in l:
-            print('  ', l.strip())
+        print('kernel/Makefile patched')
+
+
+def drop_werror_dirs():
+    """mm/Makefile 等目录用 subdir-ccflags-y += -Werror 覆盖全局，逐个改成 -Wno-error"""
+    out = subprocess.run(
+        ['grep', '-rl', '--', '-Werror', '.'],
+        cwd='kernel', capture_output=True, text=True).stdout.split()
+    patched = []
+    for f in out:
+        if not f.endswith(('Makefile', 'Kbuild')):
+            continue
+        p = pathlib.Path('kernel') / f
+        try:
+            s = p.read_text()
+        except (UnicodeDecodeError, IsADirectoryError):
+            continue
+        new = s.replace('subdir-ccflags-y += -Werror', 'subdir-ccflags-y += -Wno-error')
+        new = new.replace('ccflags-y += -Werror', 'ccflags-y += -Wno-error')
+        new = new.replace('subdir-ccflags-$(CONFIG_CC_WERROR) += -Werror',
+                          'subdir-ccflags-$(CONFIG_CC_WERROR) += -Wno-error')
+        if new != s:
+            p.write_text(new)
+            patched.append(f)
+    print('Werror removed in:', ', '.join(patched) or 'none')
 
 
 if __name__ == '__main__':
-    patch()
+    patch_makefile()
+    drop_werror_dirs()
