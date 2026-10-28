@@ -12,16 +12,18 @@ def patch(path=PATH):
     s = s.replace('CLANG_FLAGS\t+= --prefix=$(GCC_TOOLCHAIN_DIR)',
                   'CLANG_FLAGS\t+= --prefix=$(GCC_TOOLCHAIN_DIR)$(CROSS_COMPILE)')
     s = re.sub(r'^CLANG_FLAGS\t\+= --gcc-toolchain=.*\n', '', s, flags=re.M)
-    # 末尾统一把 -Werror 关掉（老树 + 新编译器有大量新告警）
-    if 'KBUILD_CFLAGS += -Wno-error' not in s:
-        s += '\n# build fix: old MTK tree vs modern toolchain\nKBUILD_CFLAGS += -Wno-error\n'
+    # 把 -Wno-error 直接塞进 ARCH_CFLAGS/KCFLAGS 那一行（确保在所有 -Werror 之后生效）
+    line = 'KBUILD_CFLAGS   += $(ARCH_CFLAGS)   $(KCFLAGS)'
+    if line in s and '$(KCFLAGS) -Wno-error' not in s:
+        s = s.replace(line, line + ' -Wno-error')
     if s != before:
         p.write_text(s)
         print('makefile patched')
-    for line in p.read_text().splitlines():
-        if 'CLANG_FLAGS' in line and ('prefix' in line or 'integrated' in line):
-            print('  ', line.strip())
-    print('  tail has -Wno-error:', 'KBUILD_CFLAGS += -Wno-error' in p.read_text())
+    for l in p.read_text().splitlines():
+        if 'CLANG_FLAGS' in l and ('prefix' in l or 'integrated' in l):
+            print('  ', l.strip())
+        if 'ARCH_CFLAGS' in l and 'KCFLAGS' in l:
+            print('  ', l.strip())
 
 
 if __name__ == '__main__':
