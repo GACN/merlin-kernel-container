@@ -92,6 +92,40 @@ jobs:
           echo "-Werror neutralized in $n makefiles"
           grep -c -e '-Werror' Makefile || echo "kernel/Makefile: no -Werror left"
 
+      - name: Provide stpcpy (clang libcall gap)
+        run: |
+          set -euo pipefail
+          cd kernel
+          # clang >= 19 lowers some strcpy()/memcpy patterns to calls to stpcpy()
+          # even in freestanding builds. 4.14 predates stpcpy, so vmlinux fails
+          # to link with 'undefined reference to stpcpy'. Provide it; optnone
+          # keeps the compiler from rewriting this into a self-call.
+          if grep -q '^char \*stpcpy' lib/string.c; then
+            echo "stpcpy already present"
+          else
+            cat >> lib/string.c <<'EOF'
+
+          /*
+           * Not part of 4.14: newer clang emits calls to stpcpy() for some strcpy()
+           * patterns, so the symbol must exist or vmlinux will not link.
+           */
+          #if defined(__clang__)
+          __attribute__((optnone))
+          #endif
+          char *stpcpy(char *dest, const char *src)
+          {
+          	while ((*dest = *src) != '\0') {
+          		dest++;
+          		src++;
+          	}
+          	return dest;
+          }
+          EXPORT_SYMBOL(stpcpy);
+          EOF
+            echo "appended stpcpy to lib/string.c"
+          fi
+          grep -n 'stpcpy' lib/string.c
+
       - name: Toolchain info
         run: |
           aarch64-linux-gnu-gcc --version | head -1
