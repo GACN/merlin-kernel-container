@@ -73,6 +73,12 @@ jobs:
           echo '--- version ---'
           grep -E '^CONFIG_LOCALVERSION' kernel/out/.config
 
+      - name: Diagnose compiler flags
+        run: |
+          if [ "$VARIANT" = clang ]; then export PATH=$PWD/clang/bin:$PATH; fi
+          if [ "$VARIANT" = clang ]; then CCV="CC=clang CLANG_TRIPLE=aarch64-linux-gnu-"; else CCV="CC=aarch64-linux-gnu-gcc"; fi
+          make -C kernel O=out ARCH=arm64 $CCV CROSS_COMPILE=aarch64-linux-gnu- V=1 mm/vmscan.o 2>&1 | grep -m2 -E 'clang|gcc' | head -3
+
       - name: Build kernel
         run: |
           set -o pipefail
