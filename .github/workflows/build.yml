@@ -49,6 +49,30 @@ jobs:
           head -5 kernel/Makefile
           python3 tools/patch_makefile.py
 
+      - name: Stub missing vendor firmware blobs
+        run: |
+          set -euo pipefail
+          cd kernel
+          # MTK OSS releases ship focaltech_config.h referencing vendor fw blobs
+          # (include/firmware/*.i) that are NOT in the OSS tree. Without them the
+          # touchscreen driver cannot compile. Create zero-filled placeholders;
+          # at runtime the driver falls back to request_firmware() from /vendor.
+          make_stub() { printf '0x00, 0x00, 0x00, 0x00,\n' > "$1"; }
+          created=0
+          while IFS= read -r f; do
+            d=$(dirname "$f")
+            while IFS= read -r rel; do
+              [ -n "$rel" ] || continue
+              mkdir -p "$d/$(dirname "$rel")"
+              if [ ! -f "$d/$rel" ]; then
+                make_stub "$d/$rel"
+                echo "stub: $d/$rel"
+                created=$((created+1))
+              fi
+            done < <(grep -oE '"[^"]*firmware/[^"]+\.i"' "$f" | tr -d '"' | sort -u)
+          done < <(grep -rlE 'firmware/[^"]+\.i' --include='*.c' --include='*.h' . 2>/dev/null || true)
+          echo "stubs created: $created"
+
       - name: Toolchain info
         run: |
           aarch64-linux-gnu-gcc --version | head -1
