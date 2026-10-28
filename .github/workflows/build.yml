@@ -48,18 +48,26 @@ jobs:
           cp config/base.config kernel/out/.config
           printf '\n' >> kernel/out/.config
           cat config/extra.config >> kernel/out/.config
-          make -C kernel O=out ARCH=arm64 CC=clang LLVM=1 olddefconfig
+          make -C kernel O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- olddefconfig
           echo '--- container options ---'
           grep -E "^CONFIG_(SYSVIPC|SYSVIPC_SYSCTL|IPC_NS|UTS_NS|PID_NS|NET_NS|USER_NS|CGROUP_DEVICE|CGROUP_PIDS|CGROUP_NET_PRIO|BLK_CGROUP|BRIDGE_NETFILTER|NETFILTER_XT_MATCH_ADDRTYPE|NETFILTER_XT_MATCH_MULTIPORT|IP_NF_TARGET_TCPMSS|MACVLAN|IPVLAN|VXLAN|OVERLAY_FS|OVL_FS)=" kernel/out/.config | sort
           echo '--- version ---'
           grep -E '^CONFIG_(LOCALVERSION|LOCALVERSION_AUTO)=' kernel/out/.config
+
+      - name: Compiler probe
+        run: |
+          export PATH=$PWD/clang/bin:$PATH
+          echo 'int f(void){return 0;}' > /tmp/t.c
+          clang --target=aarch64-linux-gnu -fstack-protector-strong -c /tmp/t.c -o /tmp/t.o && echo SSP_OK || echo SSP_FAIL
+          clang --target=aarch64-linux-gnu -mgeneral-regs-only -c /tmp/t.c -o /tmp/t.o && echo MGR_OK || echo MGR_FAIL
+          clang --target=aarch64-linux-gnu -dumpmachine
 
       - name: Build kernel
         run: |
           set -o pipefail
           export PATH=$PWD/clang/bin:$PATH
           make -C kernel O=out ARCH=arm64 -j"$(nproc)" \
-            CC=clang LLVM=1 LLVM_IAS=1 \
+            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
             LD=ld.lld AS=llvm-as AR=llvm-ar NM=llvm-nm \
             OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip \
             CROSS_COMPILE=aarch64-linux-gnu- \
