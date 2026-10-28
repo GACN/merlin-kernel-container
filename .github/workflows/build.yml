@@ -73,8 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH=$PWD/clang/bin:$PATH
-          mkdir -p kernel/out
-          cp config/base.config kernel/out/.config
+          make -C kernel O=out ARCH=arm64 LLVM=1 merlin_defconfig
           printf '\n' >> kernel/out/.config
           cat config/extra.config >> kernel/out/.config
           make -C kernel O=out ARCH=arm64 LLVM=1 olddefconfig
