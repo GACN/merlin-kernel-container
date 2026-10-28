@@ -47,8 +47,8 @@ jobs:
       - name: Integrate KernelSU
         run: |
           cd kernel
-          curl -LSs https://raw.githubusercontent.com/MrShockWAVEog/KernelSU-Next/shockwave/kernel/setup.sh | bash -s shockwave
-          ls -d KernelSU* && echo KSU_OK
+          curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/v0.9.5/kernel/setup.sh | bash -s v0.9.5
+          ls -d KernelSU && ls -d drivers/kernelsu && echo KSU_OK
 
       - name: Apply KernelSU manual hooks
         run: |
