@@ -2,8 +2,6 @@ name: Build merlin kernel (container support)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
   build:
@@ -21,11 +19,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq bc bison build-essential flex git gnupg gperf \
-            lz4 libxml2-dev libxml2-utils lzop \
-            pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev zstd \
-            gcc-arm-linux-gnueabi python3 cpio
+            lz4 libxml2-dev libxml2-utils lzop pngcrush rsync schedtool \
+            squashfs-tools xsltproc zip zlib1g-dev zstd gcc-arm-linux-gnueabi python3 cpio
 
-      - name: Fetch clang (Neutron 30072026)
+      - name: Fetch clang
         run: |
           wget -q -O clang.tar.zst https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/30072026/neutron-clang-30072026.tar.zst
           mkdir -p clang
@@ -38,49 +35,24 @@ jobs:
           chmod -R +x clang/bin || true
           clang/bin/clang --version | head -3
 
-      - name: Clone kernel source
+      - name: Clone kernel source (official Xiaomi R OSS, 4.14.186)
         run: |
-          git clone --depth=1 -b shockwave --recursive \
-            https://github.com/MrShockWAVEog/android_kernel_xiaomi_mt6768-s kernel
+          git clone --depth=1 -b main https://github.com/mitsu00/merlin-r-oss kernel
           head -6 kernel/Makefile
 
-      - name: Integrate KernelSU
-        run: |
-          cd kernel
-          curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/v0.9.5/kernel/setup.sh | bash -s v0.9.5
-          ls -d KernelSU && ls -d drivers/kernelsu && echo KSU_OK
-
-      - name: Apply KernelSU manual hooks
-        run: |
-          set -euo pipefail
-          wget -q -O /tmp/ksu_hooks.patch https://raw.githubusercontent.com/MrShockWAVEog/NonGKI_Kernel_Build-K419/shockwave/patches/KSU_HOOKS_PATCH.patch
-          cd kernel
-          if ! git apply -3 /tmp/ksu_hooks.patch 2>/dev/null; then
-            patch -p1 -l --fuzz=3 --batch < /tmp/ksu_hooks.patch || { echo 'KSU hooks patch failed'; exit 1; }
-          fi
-          grep -rn "ksu_handle_execveat" fs/exec.c | head -3
-
-      - name: Fix sched cgroup id (tree uses removed struct cgroup member)
-        run: |
-          set -euo pipefail
-          cd kernel
-          files=$(grep -rl -- '->cgroup->id' include kernel drivers 2>/dev/null || true)
-          echo "patching: $files"
-          [ -n "$files" ] && sed -i 's/->cgroup->id/->cgroup->kn->id/g' $files
-          grep -rn -- '->cgroup->kn->id' include kernel drivers 2>/dev/null | head -10 || true
-
-      - name: Configure (base = released Shockwave config + container options)
+      - name: Configure (stock ROM config + container options)
         run: |
           set -euo pipefail
           export PATH=$PWD/clang/bin:$PATH
-          make -C kernel O=out ARCH=arm64 LLVM=1 merlin_defconfig
+          mkdir -p kernel/out
+          cp config/base.config kernel/out/.config
           printf '\n' >> kernel/out/.config
           cat config/extra.config >> kernel/out/.config
           make -C kernel O=out ARCH=arm64 LLVM=1 olddefconfig
-          echo '--- resolved container options ---'
-          grep -E "^CONFIG_(SYSVIPC|SYSVIPC_SYSCTL|IPC_NS|UTS_NS|PID_NS|NET_NS|USER_NS|CGROUP_DEVICE|CGROUP_PIDS|CGROUP_NET_PRIO|BLK_CGROUP|BRIDGE_NETFILTER|NETFILTER_XT_MATCH_ADDRTYPE|NETFILTER_XT_MATCH_MULTIPORT|IP_NF_TARGET_TCPMSS|MACVLAN|IPVLAN|VXLAN|OVERLAY_FS|OVL_FS|KSU)=" kernel/out/.config | sort
-          echo '--- localversion ---'
-          grep -E '^CONFIG_LOCALVERSION=' kernel/out/.config
+          echo '--- container options ---'
+          grep -E "^CONFIG_(SYSVIPC|SYSVIPC_SYSCTL|IPC_NS|UTS_NS|PID_NS|NET_NS|USER_NS|CGROUP_DEVICE|CGROUP_PIDS|CGROUP_NET_PRIO|BLK_CGROUP|BRIDGE_NETFILTER|NETFILTER_XT_MATCH_ADDRTYPE|NETFILTER_XT_MATCH_MULTIPORT|IP_NF_TARGET_TCPMSS|MACVLAN|IPVLAN|VXLAN|OVERLAY_FS|OVL_FS)=" kernel/out/.config | sort
+          echo '--- version ---'
+          grep -E '^CONFIG_(LOCALVERSION|LOCALVERSION_AUTO)=' kernel/out/.config
 
       - name: Build kernel
         run: |
@@ -100,12 +72,10 @@ jobs:
       - name: Verify built kernel config
         run: |
           cp kernel/out/arch/arm64/boot/Image.gz-dtb .
-          if [ -x kernel/scripts/extract-ikconfig ]; then
-            kernel/scripts/extract-ikconfig Image.gz-dtb > built-config.txt || true
-          fi
-          echo "--- built-config.txt lines: $(wc -l < built-config.txt 2>/dev/null || echo 0)"
+          kernel/scripts/extract-ikconfig Image.gz-dtb > built-config.txt 2>/dev/null || true
+          echo "built-config lines: $(wc -l < built-config.txt)"
           grep -E "^CONFIG_(SYSVIPC|IPC_NS|CGROUP_DEVICE|CGROUP_PIDS|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER|USER_NS|LOCALVERSION)=" built-config.txt || true
-          strings Image.gz-dtb | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+.*SMP' || true
+          strings Image.gz-dtb | grep -m2 -E '^[0-9]+\.[0-9]+\.[0-9]+.*(SMP|g[0-9a-f]{8})' || true
 
       - name: Package AnyKernel3 zip
         run: |
@@ -117,7 +87,6 @@ jobs:
           zip -r9 ../merlin-container-kernel.zip . -x '*.git*' > /dev/null
           cd ..
           ls -l merlin-container-kernel.zip
-          unzip -l merlin-container-kernel.zip | head -12
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
