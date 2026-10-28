@@ -1,0 +1,113 @@
+name: Build merlin kernel (container support)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          df -h /
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bc bison build-essential flex git gnupg gperf \
+            lib32z1-dev liblz4-tool libncurses-dev libssl-dev libxml2 libxml2-utils lzop \
+            pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev zstd \
+            gcc-arm-linux-gnueabi python3 cpio
+
+      - name: Fetch clang (Neutron 30072026)
+        run: |
+          wget -q -O clang.tar.zst https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/30072026/neutron-clang-30072026.tar.zst
+          mkdir -p clang
+          tar -I zstd -xf clang.tar.zst -C clang
+          if [ "$(ls -1 clang | wc -l)" = "1" ] && [ -d "clang/$(ls -1 clang | head -1)" ]; then
+            inner="clang/$(ls -1 clang | head -1)"
+            mv "$inner"/* clang/ 2>/dev/null || true
+            rmdir "$inner" 2>/dev/null || true
+          fi
+          chmod -R +x clang/bin || true
+          clang/bin/clang --version | head -3
+
+      - name: Clone kernel source
+        run: |
+          git clone --depth=1 -b shockwave --recursive \
+            https://github.com/MrShockWAVEog/android_kernel_xiaomi_mt6768-s kernel
+          head -6 kernel/Makefile
+
+      - name: Integrate KernelSU
+        run: |
+          cd kernel
+          curl -LSs https://raw.githubusercontent.com/MrShockWAVEog/KernelSU-Next/shockwave/kernel/setup.sh | bash -s shockwave
+          ls -d KernelSU && echo KSU_OK
+
+      - name: Configure (base = released Shockwave config + container options)
+        run: |
+          set -euo pipefail
+          export PATH=$PWD/clang/bin:$PATH
+          mkdir -p kernel/out
+          cp config/base.config kernel/out/.config
+          printf '\n' >> kernel/out/.config
+          cat config/extra.config >> kernel/out/.config
+          make -C kernel O=out ARCH=arm64 LLVM=1 olddefconfig
+          echo '--- resolved container options ---'
+          grep -E "^CONFIG_(SYSVIPC|SYSVIPC_SYSCTL|IPC_NS|UTS_NS|PID_NS|NET_NS|USER_NS|CGROUP_DEVICE|CGROUP_PIDS|CGROUP_NET_PRIO|BLK_CGROUP|BRIDGE_NETFILTER|NETFILTER_XT_MATCH_ADDRTYPE|NETFILTER_XT_MATCH_MULTIPORT|IP_NF_TARGET_TCPMSS|MACVLAN|IPVLAN|VXLAN|OVERLAY_FS|OVL_FS|KSU)=" kernel/out/.config | sort
+          echo '--- localversion ---'
+          grep -E '^CONFIG_LOCALVERSION=' kernel/out/.config
+
+      - name: Build kernel
+        run: |
+          set -o pipefail
+          export PATH=$PWD/clang/bin:$PATH
+          make -C kernel O=out ARCH=arm64 -j"$(nproc)" \
+            LLVM=1 LLVM_IAS=1 \
+            LD=ld.lld AS=llvm-as AR=llvm-ar NM=llvm-nm \
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            CONFIG_NO_ERROR_ON_MISMATCH=y TARGET_BUILD_VARIANT=user \
+            Image.gz-dtb 2>&1 | tee build.log
+          ls -l kernel/out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Verify built kernel config
+        run: |
+          cp kernel/out/arch/arm64/boot/Image.gz-dtb .
+          if [ -x kernel/scripts/extract-ikconfig ]; then
+            kernel/scripts/extract-ikconfig Image.gz-dtb > built-config.txt || true
+          fi
+          echo "--- built-config.txt lines: $(wc -l < built-config.txt 2>/dev/null || echo 0)"
+          grep -E "^CONFIG_(SYSVIPC|IPC_NS|CGROUP_DEVICE|CGROUP_PIDS|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER|USER_NS|LOCALVERSION)=" built-config.txt || true
+          strings Image.gz-dtb | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+.*SMP' || true
+
+      - name: Package AnyKernel3 zip
+        run: |
+          set -euo pipefail
+          git clone --depth=1 -b shockwave https://github.com/MrShockWAVEog/AnyKernel3.git ak3
+          cp Image.gz-dtb ak3/
+          rm -rf ak3/.git
+          cd ak3
+          zip -r9 ../merlin-container-kernel.zip . -x '*.git*' > /dev/null
+          cd ..
+          ls -l merlin-container-kernel.zip
+          unzip -l merlin-container-kernel.zip | head -12
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: merlin-container-kernel
+          path: |
+            merlin-container-kernel.zip
+            Image.gz-dtb
+            built-config.txt
+            build.log
+          if-no-files-found: error
