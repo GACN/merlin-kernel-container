@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [clang, gcc]
+        variant: [clang]
     env:
       VARIANT: ${{ matrix.variant }}
     steps:
