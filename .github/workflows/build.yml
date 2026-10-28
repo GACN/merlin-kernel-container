@@ -50,6 +50,15 @@ jobs:
           curl -LSs https://raw.githubusercontent.com/MrShockWAVEog/KernelSU-Next/shockwave/kernel/setup.sh | bash -s shockwave
           ls -d KernelSU* && echo KSU_OK
 
+      - name: Fix sched cgroup id (tree uses removed struct cgroup member)
+        run: |
+          set -euo pipefail
+          cd kernel
+          files=$(grep -rl -- '->cgroup->id' include kernel drivers 2>/dev/null || true)
+          echo "patching: $files"
+          [ -n "$files" ] && sed -i 's/->cgroup->id/->cgroup->kn->id/g' $files
+          grep -rn -- '->cgroup->kn->id' include kernel drivers 2>/dev/null | head -10 || true
+
       - name: Configure (base = released Shockwave config + container options)
         run: |
           set -euo pipefail
