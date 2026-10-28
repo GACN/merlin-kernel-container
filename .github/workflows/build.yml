@@ -60,24 +60,6 @@ jobs:
           fi
           grep -rn "ksu_handle_execveat" fs/exec.c | head -3
 
-      - name: Add KSU reboot hook
-        run: |
-          set -euo pipefail
-          cd kernel
-          python3 - <<'PY'
-          import re, pathlib
-          p = pathlib.Path('kernel/reboot.c'); s = p.read_text()
-          if 'ksu_handle_sys_reboot' not in s:
-              decl = ('#ifdef CONFIG_KSU\nextern int ksu_handle_sys_reboot(int magic1, int magic2, '
-                      'unsigned int cmd, void __user **arg);\n#endif\n')
-              s = s.replace('#include <linux/syscalls.h>', '#include <linux/syscalls.h>\n' + decl, 1)
-              s = re.sub(r'(SYSCALL_DEFINE4\(reboot,[^{]*\{\n)',
-                         r'\1#ifdef CONFIG_KSU\n\tif (ksu_handle_sys_reboot(magic1, magic2, cmd, &arg))\n\t\treturn 0;\n#endif\n',
-                         s, count=1)
-              p.write_text(s)
-          print('hook lines:'); print('\n'.join(l for l in s.splitlines() if 'ksu_handle' in l))
-          PY
-
       - name: Fix sched cgroup id (tree uses removed struct cgroup member)
         run: |
           set -euo pipefail
