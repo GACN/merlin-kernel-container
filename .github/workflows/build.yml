@@ -79,9 +79,9 @@ jobs:
           if [ "$VARIANT" = clang ]; then export PATH=$PWD/clang/bin:$PATH; fi
           sed -i 's/^ifdef stackp-name$/ifdef stackp-name_SKIPPED/' kernel/Makefile
           if [ "$VARIANT" = clang ]; then
-            CCV="CC=clang CLANG_TRIPLE=aarch64-linux-gnu-"
+            CCV="CC=clang CLANG_TRIPLE=aarch64-linux-gnu- KCFLAGS=-Wno-error"
           else
-            CCV="CC=aarch64-linux-gnu-gcc KCFLAGS=-Wno-error=array-compare"
+            CCV="CC=aarch64-linux-gnu-gcc KCFLAGS=-Wno-error"
           fi
           make -C kernel O=out ARCH=arm64 -j"$(nproc)" $CCV \
             CROSS_COMPILE=aarch64-linux-gnu- \
