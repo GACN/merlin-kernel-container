@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq bc bison build-essential flex git gnupg gperf \
             lz4 libxml2-dev libxml2-utils lzop pngcrush rsync schedtool \
-            squashfs-tools xsltproc zip zlib1g-dev zstd gcc-arm-linux-gnueabi python3 cpio
+            squashfs-tools xsltproc zip zlib1g-dev zstd gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu python3 cpio
 
       - name: Fetch clang
         run: |
@@ -68,8 +68,6 @@ jobs:
           export PATH=$PWD/clang/bin:$PATH
           make -C kernel O=out ARCH=arm64 -j"$(nproc)" \
             CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
-            LD=ld.lld AS=llvm-as AR=llvm-ar NM=llvm-nm \
-            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
