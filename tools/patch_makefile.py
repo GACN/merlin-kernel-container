@@ -45,6 +45,16 @@ def drop_werror_dirs():
     print('Werror removed in:', ', '.join(patched) or 'none')
 
 
+def ensure_fw_stub():
+    # 公开 OSS 树没带 focaltech 的固件数组，补一个 1 字节占位（运行时走 userspace 请求固件）
+    p = pathlib.Path('kernel/include/firmware/fw_sample.i')
+    if not p.exists():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text('0x00,\n')
+        print('created stub', p)
+
+
 if __name__ == '__main__':
     patch_makefile()
     drop_werror_dirs()
+    ensure_fw_stub()
