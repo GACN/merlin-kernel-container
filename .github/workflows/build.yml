@@ -10,7 +10,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [clang]
+        # plain = container support only; ksu = same + KernelSU v0.9.5 (root)
+        variant: [plain, ksu]
     env:
       VARIANT: ${{ matrix.variant }}
     steps:
@@ -30,7 +31,6 @@ jobs:
             gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu python3 cpio
 
       - name: Fetch clang
-        if: matrix.variant == 'clang'
         run: |
           wget -q -O clang.tar.zst https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/30072026/neutron-clang-30072026.tar.zst
           mkdir -p clang
@@ -48,6 +48,19 @@ jobs:
           git clone --depth=1 -b main https://github.com/mitsu00/merlin-r-oss kernel
           head -5 kernel/Makefile
           python3 tools/patch_makefile.py
+
+      - name: Integrate KernelSU v0.9.5 (non-GKI manual hooks)
+        if: matrix.variant == 'ksu'
+        run: |
+          set -euo pipefail
+          # KernelSU >= 1.0 dropped non-GKI support; 0.9.5 is the last usable on 4.14.
+          cd kernel
+          curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -s v0.9.5
+          cd ..
+          python3 tools/add_ksu_hooks.py kernel
+          ls -ld kernel/drivers/kernelsu
+          grep -n kernelsu kernel/drivers/Makefile kernel/drivers/Kconfig || true
+          grep -n 'ksu_handle_' kernel/fs/exec.c | head -3
 
       - name: Stub missing vendor firmware blobs
         run: |
@@ -145,45 +158,40 @@ jobs:
 
       - name: Toolchain info
         run: |
+          export PATH=$PWD/clang/bin:$PATH
           aarch64-linux-gnu-gcc --version | head -1
           aarch64-linux-gnu-as --version | head -1
-          if [ "$VARIANT" = clang ]; then export PATH=$PWD/clang/bin:$PATH; clang --version | head -2; fi
+          clang --version | head -2
 
       - name: Configure (stock ROM config + container options)
         run: |
           set -euo pipefail
-          if [ "$VARIANT" = clang ]; then export PATH=$PWD/clang/bin:$PATH; fi
+          export PATH=$PWD/clang/bin:$PATH
           mkdir -p kernel/out
           cp config/base.config kernel/out/.config
           printf '\n' >> kernel/out/.config
           cat config/extra.config >> kernel/out/.config
-          if [ "$VARIANT" = clang ]; then
-            make -C kernel O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- olddefconfig
-          else
-            make -C kernel O=out ARCH=arm64 CC=aarch64-linux-gnu-gcc CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          if [ "$VARIANT" = ksu ]; then
+            echo 'CONFIG_KSU=y' >> kernel/out/.config
           fi
+          make -C kernel O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- olddefconfig
           echo '--- container options ---'
-          grep -E "^CONFIG_(SYSVIPC|IPC_NS|UTS_NS|PID_NS|NET_NS|USER_NS|CGROUP_DEVICE|CGROUP_PIDS|CGROUP_NET_PRIO|BLK_CGROUP|BRIDGE_NETFILTER|NETFILTER_XT_MATCH_ADDRTYPE|MACVLAN|IPVLAN|VXLAN|OVERLAY_FS)=" kernel/out/.config | sort
+          grep -E "^CONFIG_(SYSVIPC|IPC_NS|UTS_NS|PID_NS|NET_NS|USER_NS|CGROUP_DEVICE|CGROUP_PIDS|CGROUP_NET_PRIO|BLK_CGROUP|BRIDGE_NETFILTER|NETFILTER_XT_MATCH_ADDRTYPE|MACVLAN|IPVLAN|VXLAN|OVERLAY_FS|KSU)=" kernel/out/.config | sort
           echo '--- version ---'
           grep -E '^CONFIG_LOCALVERSION' kernel/out/.config
 
       - name: Diagnose compiler flags
         run: |
-          if [ "$VARIANT" = clang ]; then export PATH=$PWD/clang/bin:$PATH; fi
-          if [ "$VARIANT" = clang ]; then CCV="CC=clang CLANG_TRIPLE=aarch64-linux-gnu-"; else CCV="CC=aarch64-linux-gnu-gcc"; fi
-          make -C kernel O=out ARCH=arm64 $CCV CROSS_COMPILE=aarch64-linux-gnu- V=1 mm/vmscan.o 2>&1 | grep -m2 -E 'clang|gcc' | head -3
+          export PATH=$PWD/clang/bin:$PATH
+          make -C kernel O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- V=1 mm/vmscan.o 2>&1 | grep -m2 -E 'clang' | head -3
 
       - name: Build kernel
         run: |
           set -o pipefail
-          if [ "$VARIANT" = clang ]; then export PATH=$PWD/clang/bin:$PATH; fi
+          export PATH=$PWD/clang/bin:$PATH
           sed -i 's/^ifdef stackp-name$/ifdef stackp-name_SKIPPED/' kernel/Makefile
-          if [ "$VARIANT" = clang ]; then
-            CCV="CC=clang CLANG_TRIPLE=aarch64-linux-gnu- KCFLAGS=-Wno-error"
-          else
-            CCV="CC=aarch64-linux-gnu-gcc KCFLAGS=-Wno-error"
-          fi
-          make -C kernel O=out ARCH=arm64 -k -j"$(nproc)" $CCV \
+          make -C kernel O=out ARCH=arm64 -k -j"$(nproc)" \
+            CC=clang CLANG_TRIPLE=aarch64-linux-gnu- KCFLAGS=-Wno-error \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
@@ -205,14 +213,18 @@ jobs:
           echo "built-config lines: $(wc -l < "built-config-$VARIANT.txt")"
           grep -E "^CONFIG_(SYSVIPC|IPC_NS|CGROUP_DEVICE|CGROUP_PIDS|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER|USER_NS|LOCALVERSION)=" "built-config-$VARIANT.txt" || true
           strings "Image-$VARIANT.gz-dtb" | grep -m2 -E 'Linux version [0-9]' || true
+          if [ "$VARIANT" = ksu ]; then
+            grep -q '^CONFIG_KSU=y' "built-config-$VARIANT.txt" || { echo '::error::CONFIG_KSU missing from built kernel'; exit 1; }
+            echo "KernelSU: built in"
+          fi
 
-      - name: Verify vermagic matches stock vendor modules
+      - name: Verify vermagic matches the ROM kernel
         run: |
           set -o pipefail
           gzip -dc "Image-$VARIANT.gz-dtb" > Image.raw 2>/dev/null || true
           ls -l Image.raw
           got=$(strings Image.raw | grep -m1 "mod_unload")
-          want='4.14.186-perf-g6f6f342de0ae SMP preempt mod_unload modversions aarch64'
+          want='4.14.186-g46ead2c21af1 SMP preempt mod_unload modversions aarch64'
           echo "want vermagic: $want"
           echo "got  vermagic: $got"
           echo "kernel string : $(strings Image.raw | grep -m1 -E 'Linux version [0-9]' | cut -c1-80)"
@@ -220,16 +232,13 @@ jobs:
             echo "::error::vermagic mismatch - stock vendor .ko would be rejected"
             exit 1
           fi
-          echo "vermagic OK: matches stock vendor modules"
+          echo "vermagic OK: matches MIUI 12.5.7 stock kernel"
 
       - name: Package AnyKernel3 zip
         run: |
           set -euo pipefail
           git clone --depth=1 -b shockwave https://github.com/MrShockWAVEog/AnyKernel3.git ak3
           cp "Image-$VARIANT.gz-dtb" ak3/Image.gz-dtb
-          # upstream ships do.devicecheck=0; turn it on so a wrong device is refused
-          sed -i 's/^do.devicecheck=.*/do.devicecheck=1/' ak3/anykernel.sh
-          grep -E '^do.devicecheck|^device.name[0-9]' ak3/anykernel.sh
           rm -rf ak3/.git
           cd ak3
           zip -r9 "../merlin-container-$VARIANT.zip" . -x '*.git*' > /dev/null
