@@ -73,6 +73,25 @@ jobs:
           done < <(grep -rlE 'firmware/[^"]+\.i' --include='*.c' --include='*.h' . 2>/dev/null || true)
           echo "stubs created: $created"
 
+      - name: Neutralize -Werror tree-wide
+        run: |
+          set -euo pipefail
+          cd kernel
+          # kernel/Makefile gates -Werror=strict-prototypes / implicit-int /
+          # incompatible-pointer-types on, and some subdir Makefiles add plain
+          # -Werror. 4.14 sources are nowhere near clean under clang 20, so every
+          # -Werror form is downgraded to -Wno-error before compiling.
+          n=0
+          while IFS= read -r f; do
+            if grep -q -e '-Werror' "$f"; then
+              sed -i 's/-Werror/-Wno-error/g' "$f"
+              echo "patched: $f"
+              n=$((n+1))
+            fi
+          done < <(grep -rl -e '-Werror' --include='Makefile' --include='Kbuild' --include='Makefile.*' --include='*.mk' . 2>/dev/null || true)
+          echo "-Werror neutralized in $n makefiles"
+          grep -c -e '-Werror' Makefile || echo "kernel/Makefile: no -Werror left"
+
       - name: Toolchain info
         run: |
           aarch64-linux-gnu-gcc --version | head -1
@@ -113,13 +132,20 @@ jobs:
           else
             CCV="CC=aarch64-linux-gnu-gcc KCFLAGS=-Wno-error"
           fi
-          make -C kernel O=out ARCH=arm64 -j"$(nproc)" $CCV \
+          make -C kernel O=out ARCH=arm64 -k -j"$(nproc)" $CCV \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
             CONFIG_NO_ERROR_ON_MISMATCH=y TARGET_BUILD_VARIANT=user \
             Image.gz-dtb 2>&1 | tee build.log
           ls -l kernel/out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Summarize build errors
+        if: failure()
+        run: |
+          echo '--- unique errors ---'
+          grep -hE ' error: |[Ff]atal error|No rule to make target|undefined reference' build.log \
+            | sed -E 's/^\.\.\///' | sort -u | head -60 || true
 
       - name: Verify built kernel config
         run: |
