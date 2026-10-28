@@ -81,7 +81,7 @@ jobs:
           if [ "$VARIANT" = clang ]; then
             CCV="CC=clang CLANG_TRIPLE=aarch64-linux-gnu-"
           else
-            CCV="CC=aarch64-linux-gnu-gcc"
+            CCV="CC=aarch64-linux-gnu-gcc KCFLAGS=-Wno-error=array-compare"
           fi
           make -C kernel O=out ARCH=arm64 -j"$(nproc)" $CCV \
             CROSS_COMPILE=aarch64-linux-gnu- \
