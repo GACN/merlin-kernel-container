@@ -126,6 +126,23 @@ jobs:
           fi
           grep -n 'stpcpy' lib/string.c
 
+      - name: Strip + from localversion (vermagic)
+        run: |
+          set -euo pipefail
+          cd kernel
+          # vermagic must match the stock vendor modules exactly:
+          #   4.14.186-perf-g6f6f342de0ae SMP preempt mod_unload modversions aarch64
+          # (verified by scanning the stock vendor.img for the .modinfo string)
+          # scripts/setlocalversion appends '+' whenever the git tree is dirty -
+          # and our own patches always dirty it - so that marker is removed here.
+          if grep -q 'res="$res${scm:++}"' scripts/setlocalversion; then
+            sed -i 's|res="$res${scm:++}"|res="$res"|' scripts/setlocalversion
+            echo "patched scripts/setlocalversion: no + suffix"
+          else
+            echo "::warning::setlocalversion plus-sign pattern not found"
+          fi
+          grep -n 'scm:++' scripts/setlocalversion || echo 'plus-sign logic gone'
+
       - name: Toolchain info
         run: |
           aarch64-linux-gnu-gcc --version | head -1
@@ -188,6 +205,22 @@ jobs:
           echo "built-config lines: $(wc -l < "built-config-$VARIANT.txt")"
           grep -E "^CONFIG_(SYSVIPC|IPC_NS|CGROUP_DEVICE|CGROUP_PIDS|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER|USER_NS|LOCALVERSION)=" "built-config-$VARIANT.txt" || true
           strings "Image-$VARIANT.gz-dtb" | grep -m2 -E 'Linux version [0-9]' || true
+
+      - name: Verify vermagic matches stock vendor modules
+        run: |
+          set -o pipefail
+          gzip -dc "Image-$VARIANT.gz-dtb" > Image.raw 2>/dev/null || true
+          ls -l Image.raw
+          got=$(strings Image.raw | grep -m1 "mod_unload")
+          want='4.14.186-perf-g6f6f342de0ae SMP preempt mod_unload modversions aarch64'
+          echo "want vermagic: $want"
+          echo "got  vermagic: $got"
+          echo "kernel string : $(strings Image.raw | grep -m1 -E 'Linux version [0-9]' | cut -c1-80)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::vermagic mismatch - stock vendor .ko would be rejected"
+            exit 1
+          fi
+          echo "vermagic OK: matches stock vendor modules"
 
       - name: Package AnyKernel3 zip
         run: |
