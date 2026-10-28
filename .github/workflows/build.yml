@@ -50,6 +50,16 @@ jobs:
           curl -LSs https://raw.githubusercontent.com/MrShockWAVEog/KernelSU-Next/shockwave/kernel/setup.sh | bash -s shockwave
           ls -d KernelSU* && echo KSU_OK
 
+      - name: Apply KernelSU manual hooks
+        run: |
+          set -euo pipefail
+          wget -q -O /tmp/ksu_hooks.patch https://raw.githubusercontent.com/MrShockWAVEog/NonGKI_Kernel_Build-K419/shockwave/patches/KSU_HOOKS_PATCH.patch
+          cd kernel
+          if ! git apply -3 /tmp/ksu_hooks.patch 2>/dev/null; then
+            patch -p1 -l --fuzz=3 --batch < /tmp/ksu_hooks.patch || { echo 'KSU hooks patch failed'; exit 1; }
+          fi
+          grep -rn "ksu_handle_execveat" fs/exec.c | head -3
+
       - name: Fix sched cgroup id (tree uses removed struct cgroup member)
         run: |
           set -euo pipefail
