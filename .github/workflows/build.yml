@@ -10,9 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # compat-oc-plain = Magisk-preserving stock-like kernel + 2.3 GHz OPP + containers
-        # Keep KernelSU out of this regression: the target already has Magisk.
-        variant: [oc-plain]
+        # wifi-fix-plain = stock-like kernel + DroidSpaces support + vendor module CRC bypass
+        # No overclock or KernelSU in this regression; isolate Wi-Fi/BT compatibility first.
+        variant: [wifi-fix-plain]
     env:
       VARIANT: ${{ matrix.variant }}
     steps:
@@ -50,10 +50,15 @@ jobs:
           head -5 kernel/Makefile
           python3 tools/patch_makefile.py
 
-      - name: Apply Shas 2.3 GHz big-cluster OPP only
+      - name: Apply vendor module MODVERSIONS compatibility patch
         run: |
           set -euo pipefail
-          python3 tools/apply_oc.py kernel
+          python3 tools/patch_modversion_crc.py kernel
+          grep -n -A8 -B2 'Droidspaces Merlin MODVERSIONS compatibility' kernel/kernel/module.c
+
+      - name: Keep stock CPU tables for Wi-Fi/BT regression
+        run: |
+          set -euo pipefail
           grep -n 'CPU_DVFS_FREQ0_L_6768' kernel/drivers/misc/mediatek/base/power/cpufreq_v1/src/mach/mt6768/mtk_cpufreq_opp_table.h
 
       - name: Integrate KernelSU v0.9.5 (non-GKI manual hooks)
