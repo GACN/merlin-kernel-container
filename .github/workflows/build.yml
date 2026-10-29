@@ -10,8 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # plain = container support only; ksu = same + KernelSU v0.9.5 (root)
-        variant: [plain, ksu]
+        # oc-plain = stock-like kernel + 2.3 GHz big-cluster OPP + containers
+        # oc-ksu = same + KernelSU v0.9.5 (root manager)
+        variant: [oc-plain, oc-ksu]
     env:
       VARIANT: ${{ matrix.variant }}
     steps:
@@ -49,8 +50,14 @@ jobs:
           head -5 kernel/Makefile
           python3 tools/patch_makefile.py
 
+      - name: Apply Shas 2.3 GHz big-cluster OPP only
+        run: |
+          set -euo pipefail
+          python3 tools/apply_oc.py kernel
+          grep -n 'CPU_DVFS_FREQ0_L_6768' kernel/drivers/misc/mediatek/base/power/cpufreq_v1/src/mach/mt6768/mtk_cpufreq_opp_table.h
+
       - name: Integrate KernelSU v0.9.5 (non-GKI manual hooks)
-        if: matrix.variant == 'ksu'
+        if: matrix.variant == 'oc-ksu'
         run: |
           set -euo pipefail
           # KernelSU >= 1.0 dropped non-GKI support; 0.9.5 is the last usable on 4.14.
@@ -171,7 +178,7 @@ jobs:
           cp config/base.config kernel/out/.config
           printf '\n' >> kernel/out/.config
           cat config/extra.config >> kernel/out/.config
-          if [ "$VARIANT" = ksu ]; then
+          if [ "$VARIANT" = oc-ksu ]; then
             echo 'CONFIG_KSU=y' >> kernel/out/.config
           fi
           make -C kernel O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- olddefconfig
@@ -206,14 +213,23 @@ jobs:
           grep -hE ' error: |[Ff]atal error|No rule to make target|undefined reference' build.log \
             | sed -E 's/^\.\.\///' | sort -u | head -60 || true
 
+      - name: Replace built DTB with target phone's known-good stock DTB
+        run: |
+          set -euo pipefail
+          python3 tools/replace_appended_dtb.py \
+            kernel/out/arch/arm64/boot/Image.gz-dtb \
+            config/stock-merlin-kernel.dtb \
+            "Image-$VARIANT.gz-dtb"
+          strings "Image-$VARIANT.gz-dtb" | grep -m1 -E 'Linux version [0-9]'
+
       - name: Verify built kernel config
         run: |
-          cp kernel/out/arch/arm64/boot/Image.gz-dtb "Image-$VARIANT.gz-dtb"
+          cp "Image-$VARIANT.gz-dtb" "Image-$VARIANT.verify.gz-dtb"
           kernel/scripts/extract-ikconfig "Image-$VARIANT.gz-dtb" > "built-config-$VARIANT.txt" 2>/dev/null || true
           echo "built-config lines: $(wc -l < "built-config-$VARIANT.txt")"
           grep -E "^CONFIG_(SYSVIPC|IPC_NS|CGROUP_DEVICE|CGROUP_PIDS|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER|USER_NS|LOCALVERSION)=" "built-config-$VARIANT.txt" || true
           strings "Image-$VARIANT.gz-dtb" | grep -m2 -E 'Linux version [0-9]' || true
-          if [ "$VARIANT" = ksu ]; then
+          if [ "$VARIANT" = oc-ksu ]; then
             grep -q '^CONFIG_KSU=y' "built-config-$VARIANT.txt" || { echo '::error::CONFIG_KSU missing from built kernel'; exit 1; }
             echo "KernelSU: built in"
           fi
@@ -239,8 +255,9 @@ jobs:
           set -euo pipefail
           git clone --depth=1 -b shockwave https://github.com/MrShockWAVEog/AnyKernel3.git ak3
           cp "Image-$VARIANT.gz-dtb" ak3/Image.gz-dtb
-          # upstream ships do.devicecheck=0; turn it on so a wrong device is refused
+          # upstream ships do.devicecheck=0; refuse any non-merlin target
           sed -i 's/^do.devicecheck=.*/do.devicecheck=1/' ak3/anykernel.sh
+          sed -i 's/^device.name1=.*/device.name1=merlin/' ak3/anykernel.sh
           grep -E '^do.devicecheck|^device.name[0-9]' ak3/anykernel.sh
           rm -rf ak3/.git
           cd ak3
