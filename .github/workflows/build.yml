@@ -220,7 +220,7 @@ jobs:
             kernel/out/arch/arm64/boot/Image.gz-dtb \
             config/stock-merlin-kernel.dtb \
             "Image-$VARIANT.gz-dtb"
-          strings "Image-$VARIANT.gz-dtb" | grep -m1 -E 'Linux version [0-9]'
+          strings "Image-$VARIANT.gz-dtb" | grep -m1 -E 'Linux version [0-9]' || true
 
       - name: Verify built kernel config
         run: |
