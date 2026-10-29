@@ -10,9 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # oc-plain = stock-like kernel + 2.3 GHz big-cluster OPP + containers
-        # oc-ksu = same + KernelSU v0.9.5 (root manager)
-        variant: [oc-plain, oc-ksu]
+        # compat-oc-plain = Magisk-preserving stock-like kernel + 2.3 GHz OPP + containers
+        # Keep KernelSU out of this regression: the target already has Magisk.
+        variant: [oc-plain]
     env:
       VARIANT: ${{ matrix.variant }}
     steps:
