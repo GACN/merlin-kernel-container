@@ -239,6 +239,9 @@ jobs:
           set -euo pipefail
           git clone --depth=1 -b shockwave https://github.com/MrShockWAVEog/AnyKernel3.git ak3
           cp "Image-$VARIANT.gz-dtb" ak3/Image.gz-dtb
+          # upstream ships do.devicecheck=0; turn it on so a wrong device is refused
+          sed -i 's/^do.devicecheck=.*/do.devicecheck=1/' ak3/anykernel.sh
+          grep -E '^do.devicecheck|^device.name[0-9]' ak3/anykernel.sh
           rm -rf ak3/.git
           cd ak3
           zip -r9 "../merlin-container-$VARIANT.zip" . -x '*.git*' > /dev/null
