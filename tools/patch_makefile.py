@@ -9,7 +9,8 @@ def patch_makefile(path=PATH):
     p = pathlib.Path(path)
     s = p.read_text()
     before = s
-    # clang + distro binutils：--prefix 必须带 triple，否则会调用宿主 /usr/bin/as
+    # clang + distro binutils: --prefix must carry the triple, otherwise clang
+    # invokes the host /usr/bin/as and the build dies on the first .S file.
     s = s.replace('CLANG_FLAGS\t+= --prefix=$(GCC_TOOLCHAIN_DIR)',
                   'CLANG_FLAGS\t+= --prefix=$(GCC_TOOLCHAIN_DIR)$(CROSS_COMPILE)')
     s = re.sub(r'^CLANG_FLAGS\t\+= --gcc-toolchain=.*\n', '', s, flags=re.M)
@@ -19,10 +20,12 @@ def patch_makefile(path=PATH):
     if s != before:
         p.write_text(s)
         print('kernel/Makefile patched')
+    else:
+        print('kernel/Makefile already patched')
 
 
 def drop_werror_dirs():
-    """mm/Makefile 等目录用 subdir-ccflags-y += -Werror 覆盖全局，逐个改成 -Wno-error"""
+    """Per-directory `subdir-ccflags-y += -Werror` overrides KCFLAGS=-Wno-error."""
     out = subprocess.run(
         ['grep', '-rl', '--', '-Werror', '.'],
         cwd='kernel', capture_output=True, text=True).stdout.split()
@@ -45,16 +48,6 @@ def drop_werror_dirs():
     print('Werror removed in:', ', '.join(patched) or 'none')
 
 
-def ensure_fw_stub():
-    # 公开 OSS 树没带 focaltech 的固件数组，补一个 1 字节占位（运行时走 userspace 请求固件）
-    p = pathlib.Path('kernel/include/firmware/fw_sample.i')
-    if not p.exists():
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text('0x00,\n')
-        print('created stub', p)
-
-
 if __name__ == '__main__':
     patch_makefile()
     drop_werror_dirs()
-    ensure_fw_stub()
